@@ -11,8 +11,8 @@ object Processes {
 }
 
 trait Processes[F[_]] {
-  import messages._
   import converters._
+  import messages._
 
   def get(
       request: GetRequest

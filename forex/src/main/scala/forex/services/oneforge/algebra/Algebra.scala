@@ -1,4 +1,4 @@
-package forex.services.oneforge
+package forex.services.oneforge.algebra
 
 import forex.domain._
 

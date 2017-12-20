@@ -16,10 +16,8 @@ object Rate {
   )
 
   object Pair {
-    implicit val encoder: Encoder[Pair] =
-      deriveEncoder[Pair]
+    implicit val encoder: Encoder[Pair] = deriveEncoder
   }
 
-  implicit val encoder: Encoder[Rate] =
-    deriveEncoder[Rate]
+  implicit val encoder: Encoder[Rate] = deriveEncoder
 }

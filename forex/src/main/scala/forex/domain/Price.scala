@@ -9,4 +9,6 @@ object Price {
     Price(BigDecimal(value))
 
   implicit val encoder: Encoder[Price] = deriveUnwrappedEncoder[Price]
+
+  implicit val decoder: Decoder[Price] = deriveUnwrappedDecoder[Price]
 }

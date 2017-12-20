@@ -14,7 +14,7 @@ final object UnwrappedDecoder {
     override def apply(c: HCursor): Decoder.Result[A] =
       decode(c) match {
         case Right(unwrapped) ⇒ Right(gen.value.from(unwrapped :: HNil))
-        case l @ Left(_) ⇒ l.asInstanceOf[Decoder.Result[A]]
+        case l @ Left(_)      ⇒ l.asInstanceOf[Decoder.Result[A]]
       }
   }
 }

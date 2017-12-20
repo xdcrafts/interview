@@ -1,12 +1,13 @@
 package forex.main
 
-import scala.concurrent.Future
 import akka.http.scaladsl._
 import cats.Eval
-import org.zalando.grafter._
-import org.zalando.grafter.macros._
 import forex.config._
 import forex.interfaces.api.Routes
+import org.zalando.grafter._
+import org.zalando.grafter.macros._
+
+import scala.concurrent.Future
 
 @readerOf[ApplicationConfig]
 case class Api(
@@ -17,9 +18,7 @@ case class Api(
 ) extends Start
     with Stop {
   import actorSystems._
-
-  implicit private val ec =
-    executors.default
+  import executors._
 
   private lazy val bindingFuture: Future[Http.ServerBinding] =
     Http().bindAndHandle(routes.route, config.interface, config.port)

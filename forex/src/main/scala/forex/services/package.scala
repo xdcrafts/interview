@@ -1,10 +1,11 @@
 package forex
 
+import forex.services.oneforge.algebra.{ Algebra, Error }
+
 package object services {
 
-  type OneForge[F[_]] = oneforge.Algebra[F]
-  final val OneForge = oneforge.Interpreters
-  type OneForgeError = oneforge.Error
-  final val OneForgeError = oneforge.Error
+  type OneForge[F[_]] = Algebra[F]
+  type OneForgeError = Error
+  final val OneForgeError = oneforge.algebra.Error
 
 }
