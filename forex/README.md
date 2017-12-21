@@ -1,54 +1,64 @@
 # Forex OneForge Proxy
 
-## Assumptions
+## Requirements
 
-Since proxy should support at least 10000 requests per day, rates should not be older than 5 minutes
-and one forge free account allows only 1000 request per day with at least 10 updates per minute
-we have next options:
+> An internal user of the application should be able to ask for an exchange rate between 2 given currencies, and get back a rate that is not older than 5 minutes.
+The application should at least support 10.000 requests per day.
 
-- Use several one forge free accounts with load balancing and proxy each request directly
-    - pros
-        - always most recent data
-    - cons
-        - proxy will be limited by *accounts_number * 1000* requests per day, so without any throttling proxy may go to "unavailable" mode
-- Since one forge api supports bulk requests we can use single one forge account per service instance and use in-memory cache for rates
-    - sync: on proxy api call we may check timestamp of cached rate and perform bulk update if needed
-        - pros
-            - allows to minimize api calls to one forge
-        - cons
-            - latency of some requests may be greater than with async option
-            - high contention scenario may cause unnecessary calls to one forge api and quota can be exhausted quite fast
-    - async: fill some in-memory cache with one forge data by some periodically task
-        - pros
-            - best availability
-            - best latency
-        - cons
-            - unnecessary api calls to one forge may happen
-            - one forge api errors are hidden from user, monitoring required
-- Kind of a both options at the same time in case if requirement of 5 minute freshness will change
+## Free account limitations
+
+> One Forge free account supports only 1000 requests per day, 10-20 updates per minute
+
+## Solutions
+
+1. A naive and straightforward proxy that sends each request to `1forge`. 
+    - this solution is not acceptable since it does not fit the requirements
+2. Use caching mechanism and straightforward proxy: application checks availability of exchange rate in cache and in case of cache miss sends request to `1forge`
+    - this solution improves the availability of proxy service but still does not meet the requirements since in worst case quota of 1000 requests will be exhausted after 2 hours, so rest 9000 requests to the proxy will be unsuccessful
+3. Use several (10) free `1forge` accounts with solution #1 to meet the requirements
+    - the main caveat is that proxy still will be limited by *accounts_number * 1000* requests per day, so without any throttling, the proxy may go to "unavailable" mode quite fast
+4. Use caching mechanism like in solution #3 but send *bulk* requests (to fetch all available currency rates at once) to `1forge`
+    - without synchronization of cache reads and writes in worst case of high load and high contention this solution may not fit the requirements, since lock-free data structures may repeat cache swap side-effects (requests to `1forge`)
+5. Use currency rates cache filled by some scheduled task using *bulk* requests to `1forge`. Requests to proxy are only low-latency cache reads.
+6. Combine #3 and #5 solutions, in case if requirement of 5 minute freshness will change
+
+Solution #5 was implemented.
+
+## Improvements
+
+- Define cache-update retry rules
+- Grafana alerts in cases of quota exhaustion and cache update failures
 
 ## How to run
 
-To run tests use
+### Tests
 
-  ~~~
-  sbt test
-  ~~~
+~~~sbtshell
+ sbt test
+~~~
 
-To run application just use
+### Run
 
-  ~~~
-  sbt run
-  ~~~
+- [Optional] start grafana docker container as described in [grafana readme page](./grafana/README.md)
+- start application
 
-To choose implementation, navigate to *forex.main* package object and switch *OneForgeImpl* type to
+~~~sbtshell
+ sbt run
+~~~
 
-- OneForgeLive for live solution with asynchronous updates
-- OneForgeDummy for dummy implementation
+- perform some requests like
+
+~~~bash
+ curl http://localhost:8888/?from=usd\&to=eur
+~~~
+
+- you can use `ab` to perform some load and
+
+~~~bash
+ ab -k -n 1000000 -c 50 http://localhost:8888/?from=jpy\&to=eur
+ ab -k -n 1000000 -c 50 http://localhost:8888/?from=jpy\&to=usd
+~~~
 
 ## NOTES:
 
 - perhaps some adjustments with timeouts needed
-- motivation was
-    - to preserve interfaces and contracts between modules
-    - to build asynchronous immutable cache of values

@@ -13,6 +13,7 @@ import scala.concurrent.duration.FiniteDuration
 abstract class ApplicationSpec extends FlatSpec with Matchers with EitherValues with BeforeAndAfter with MockFactory {
 
   import org.atnos.eff.syntax.addon.monix.task._
+  import org.xdcrafts.eff.addon.syntax.metrics._
   import org.zalando.grafter.syntax.rewriter._
 
   implicit val sc: Scheduler = Scheduler(scala.concurrent.ExecutionContext.global)
@@ -58,7 +59,7 @@ abstract class ApplicationSpec extends FlatSpec with Matchers with EitherValues 
 
   def eff[R, T](eff: AppEffect[R])(callback: R ⇒ T): T =
     Await.result(
-      eff.runAsync.runAsync.map(callback),
+      eff.runMetrics.runAsync.runAsync.map(callback),
       FiniteDuration(1, TimeUnit.SECONDS)
     )
 

@@ -6,7 +6,7 @@ import akka.http.scaladsl.unmarshalling.Unmarshal
 import forex.config.{ ApplicationConfig, OneForgeConfig }
 import forex.main.ActorSystems
 import forex.services.oneforge._
-import forex.services.oneforge.algebra.Error.ApiError
+import forex.services.oneforge.algebra.Error
 import forex.services.oneforge.client.OneForgeClientUtils.OneForgeQuotaResponse
 import io.circe.Decoder
 import monix.eval.Task
@@ -14,8 +14,8 @@ import org.zalando.grafter.macros.{ defaultReader, readerOf }
 
 @defaultReader[AkkaOneForgeClient]
 trait OneForgeClient {
-  def getOneForgeRates: Task[OneForgeCache]
-  def getQuota: Task[OneForgeQuotaResponse]
+  def getOneForgeRates: Task[Error Either OneForgeCache]
+  def getQuota: Task[Error Either OneForgeQuotaResponse]
 }
 
 @readerOf[ApplicationConfig]
@@ -42,21 +42,24 @@ case class AkkaOneForgeClient(
           Task
             .deferFuture(Unmarshal(r.entity).to[OneForgeErrorResponse Either Response])
             .flatMap {
-              case Left(error)  ⇒ Task.raiseError(ApiError(error.message))
+              case Left(error)  ⇒ Task.raiseError(Error.ApiError(error.message))
               case Right(value) ⇒ Task.now(value)
             }
         case _ ⇒
-          Task.raiseError(ApiError("OneForge API returned non 200 response"))
+          Task.raiseError(Error.ApiError("OneForge API returned non 200 response"))
       }
 
-  override def getOneForgeRates: Task[OneForgeCache] =
-    oneForgeRequestTask[OneForgeRatesResponse](oneForgeRatesRequestString).map {
-      _.values
-        .map(oneForgeRateToRate)
-        .map(v ⇒ v.pair → v)
-        .toMap
-    }
+  override def getOneForgeRates: Task[Error Either OneForgeCache] =
+    oneForgeRequestTask[OneForgeRatesResponse](oneForgeRatesRequestString)
+      .map {
+        _.values
+          .map(oneForgeRateToRate)
+          .map(v ⇒ v.pair → v)
+          .toMap
+      }
+      .attempt
+      .map(_.left.map(Error.fromThrowable))
 
-  override def getQuota: Task[OneForgeQuotaResponse] =
-    oneForgeRequestTask[OneForgeQuotaResponse](oneForgeQuotaRequestString)
+  override def getQuota: Task[Error Either OneForgeQuotaResponse] =
+    oneForgeRequestTask[OneForgeQuotaResponse](oneForgeQuotaRequestString).attempt.map(_.left.map(Error.fromThrowable))
 }

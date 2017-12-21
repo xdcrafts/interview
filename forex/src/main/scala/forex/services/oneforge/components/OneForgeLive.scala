@@ -6,13 +6,15 @@ import cats.Eval
 import cats.data.Validated.{ Invalid, Valid }
 import cats.data.{ Validated, ValidatedNel }
 import com.typesafe.scalalogging.LazyLogging
-import forex.config.{ ApplicationConfig, OneForgeConfig }
+import forex.config._
 import forex.main._
-import forex.services.oneforge.algebra.Error.{ ApiError, System }
-import forex.services.oneforge.algebra.{ Interpreters, Live }
+import forex.services.oneforge.algebra._
 import forex.services.oneforge.client.OneForgeClient
 import monix.eval.Task
 import monix.execution.{ Cancelable, Scheduler }
+import org.atnos.eff.Eff
+import org.atnos.eff.addon.monix.task._
+import org.xdcrafts.eff.addon.metrics.MetricsEffect._
 import org.zalando.grafter._
 import org.zalando.grafter.macros.readerOf
 
@@ -24,7 +26,8 @@ import scala.util.{ Failure, Success }
 case class OneForgeLive(
     config: OneForgeConfig,
     client: OneForgeClient,
-    executors: Executors
+    executors: Executors,
+    runners: Runners
 ) extends OneForgeComponent
     with Start
     with Stop
@@ -36,12 +39,9 @@ case class OneForgeLive(
   override final lazy val oneForge: Live[AppStack] =
     Interpreters.live[AppStack](config.cacheInvalidateAfter)
 
-  private final lazy val effect: Task[Unit] =
-    client.getOneForgeRates.map(c ⇒ oneForge.swap(Task.now(c)))
-
   @volatile private final var scheduledTask: Option[Cancelable] = None
 
-  override def start: Eval[StartResult] = StartResult.eval("AsyncOneForge") {
+  override def start: Eval[StartResult] = StartResult.eval("OneForgeLive") {
 
     validateConfig(config, client) match {
       case Invalid(errors) ⇒ throw new IllegalArgumentException(errors.toList.mkString("{", " | ", "}"))
@@ -52,20 +52,16 @@ case class OneForgeLive(
 
     scheduledTask = Some(
       default.scheduleAtFixedRate(FiniteDuration(0, TimeUnit.SECONDS), config.cacheRefreshRate) {
-        effect.runOnComplete {
-          case Success(_) ⇒ logger.debug("OneForge rates updated")
-          case Failure(err) ⇒
-            err match {
-              case ApiError(msg) ⇒ logger.warn(s"OneForge rates update failed. OneForge API responded with error: $msg")
-              case System(thr)   ⇒ logger.warn(s"OneForge rates update failed:", thr)
-              case _             ⇒ logger.warn(s"OneForge rates update failed:", err)
-            }
+        runners.runApp(cacheUpdateEffect(config, client, oneForge)).runOnComplete {
+          case Failure(throwable)   ⇒ logger.error("OneForge cache update failed: ", throwable)
+          case Success(Some(error)) ⇒ logger.error("OneForge cache update failed: ", error)
+          case Success(None)        ⇒ logger.debug("OneForge rates updated")
         }
       }
     )
   }
 
-  override def stop: Eval[StopResult] = StopResult.eval("AsyncOneForge") {
+  override def stop: Eval[StopResult] = StopResult.eval("OneForgeLive") {
     scheduledTask.foreach(_.cancel())
     scheduledTask = None
   }
@@ -73,6 +69,29 @@ case class OneForgeLive(
 
 object OneForgeLive {
   import cats.implicits._
+  import forex.services.metrics._
+  import scala.language.postfixOps
+
+  def cacheUpdateEffect[R: _task: _metrics](
+      config: OneForgeConfig,
+      client: OneForgeClient,
+      live: Live[R]
+  ): Eff[R, Option[Error]] =
+    for {
+      cacheOrError ← fromTask(client.getOneForgeRates)
+      _ ← cacheOrError match {
+        case Left(error) ⇒
+          meter(
+            s"$biz.one-forge-live.cache-update.${config.apiKey}.${error.getClass.getSimpleName.toLowerCase}"
+          )
+        case Right(cache) ⇒
+          live.swap(Task.now(cache))
+      }
+    } yield
+      cacheOrError match {
+        case Left(error) ⇒ Some(error)
+        case Right(_)    ⇒ None
+      }
 
   type ValidatedConf = ValidatedNel[String, Unit]
 
@@ -84,10 +103,10 @@ object OneForgeLive {
   )(
       implicit sc: Scheduler
   ): ValidatedConf =
-    validateSupportedTimeUnits("invalidate after duration", config.cacheInvalidateAfter)
-      .combine(validateSupportedTimeUnits("refresh rate", config.cacheRefreshRate))
-      .combine(validateRates(config.cacheRefreshRate, config.cacheInvalidateAfter))
-      .andThen(_ ⇒ validateQuotas(config, oneForgeClient))
+    validateSupportedTimeUnits("invalidate after duration", config.cacheInvalidateAfter) combine
+      validateSupportedTimeUnits("refresh rate", config.cacheRefreshRate) combine
+      validateRates(config.cacheRefreshRate, config.cacheInvalidateAfter) andThen
+      (_ ⇒ validateQuotas(config, oneForgeClient))
 
   def validateQuotas(
       config: OneForgeConfig,
@@ -98,7 +117,10 @@ object OneForgeLive {
     if (!config.validateDailyQuota && !config.validateRemainingQuota) {
       Validated.valid(())
     } else {
-      val quota = Await.result(oneForgeClient.getQuota.runAsync, config.validateQuotaTimeout)
+      val quota = Await.result(oneForgeClient.getQuota.runAsync, config.quotaRequestTimeout) match {
+        case Left(error)     ⇒ throw error
+        case Right(response) ⇒ response
+      }
       val dailyQuotaValidator =
         () ⇒ validateQuota(config.cacheRefreshRate, "total", quota.quotaLimit, 24)
       val remainingQuotaValidator =

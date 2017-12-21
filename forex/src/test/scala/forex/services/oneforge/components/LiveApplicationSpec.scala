@@ -31,7 +31,7 @@ class LiveApplicationSpec extends ApplicationSpec {
       apiKey = "",
       cacheInvalidateAfter = FiniteDuration(5, TimeUnit.MILLISECONDS),
       cacheRefreshRate = FiniteDuration(50, TimeUnit.MILLISECONDS),
-      validateQuotaTimeout = FiniteDuration(5, TimeUnit.MILLISECONDS),
+      quotaRequestTimeout = FiniteDuration(5, TimeUnit.MILLISECONDS),
       validateDailyQuota = true,
       validateRemainingQuota = true
     )
@@ -46,8 +46,8 @@ class LiveApplicationSpec extends ApplicationSpec {
     val asyncApplication = application[LiveApplication](config)
       .replace[OneForgeClient](mockOneForgeClient)
 
-    val quota = Task.now(OneForgeQuotaResponse(0, 100, 100, 24))
-    (mockOneForgeClient.getQuota _).expects().returning(quota)
+    val quota = Task.now(Right(OneForgeQuotaResponse(0, 100, 100, 24)))
+    (mockOneForgeClient.getQuota _).stubs().returning(quota)
     withApplication(asyncApplication)(_ ⇒ succeed)
   }
 
@@ -56,11 +56,14 @@ class LiveApplicationSpec extends ApplicationSpec {
     val asyncApplication = application[LiveApplication](config)
       .replace[OneForgeClient](mockOneForgeClient)
 
-    val quota = Task.now(OneForgeQuotaResponse(0, 100000, 100000, 24))
-    (mockOneForgeClient.getQuota _).expects().returning(quota)
-    (mockOneForgeClient.getOneForgeRates _).expects().returning(Task.now(Map()))
+    val quota = Task.now(Right(OneForgeQuotaResponse(0, 100000, 100000, 24)))
+    (mockOneForgeClient.getQuota _).stubs().returning(quota)
+    (mockOneForgeClient.getOneForgeRates _).stubs().returning(Task.now(Right(Map())))
 
-    withApplication(asyncApplication)(_ ⇒ succeed)
+    withApplication(asyncApplication) { _ ⇒
+      Thread.sleep(config.oneForge.cacheRefreshRate.toMillis)
+      succeed
+    }
   }
 
   it should "return a not found error if conversion rate not found" in {
@@ -68,11 +71,12 @@ class LiveApplicationSpec extends ApplicationSpec {
     val asyncApplication = application[LiveApplication](config)
       .replace[OneForgeClient](mockOneForgeClient)
 
-    val quota = Task.now(OneForgeQuotaResponse(0, 100000, 100000, 24))
-    (mockOneForgeClient.getQuota _).expects().returning(quota)
-    (mockOneForgeClient.getOneForgeRates _).expects().returning(Task.now(Map()))
+    val quota = Task.now(Right(OneForgeQuotaResponse(0, 100000, 100000, 24)))
+    (mockOneForgeClient.getQuota _).stubs().returning(quota)
+    (mockOneForgeClient.getOneForgeRates _).stubs().returning(Task.now(Right(Map())))
 
     withApplication(asyncApplication) { _ ⇒
+      Thread.sleep(config.oneForge.cacheRefreshRate.toMillis)
       eff(asyncApplication.oneForge.oneForge.get(Rate.Pair(USD, EUR))) { r ⇒
         assert(r.left.get == Error.NotFound)
       }
@@ -84,11 +88,11 @@ class LiveApplicationSpec extends ApplicationSpec {
     val asyncApplication = application[LiveApplication](config)
       .replace[OneForgeClient](mockOneForgeClient)
 
-    val quota = Task.now(OneForgeQuotaResponse(0, 100000, 100000, 24))
-    (mockOneForgeClient.getQuota _).expects().returning(quota)
+    val quota = Task.now(Right(OneForgeQuotaResponse(0, 100000, 100000, 24)))
+    (mockOneForgeClient.getQuota _).stubs().returning(quota)
 
     val pair = Rate.Pair(USD, EUR)
-    val cacheTask = Task.eval(Map(pair → Rate(pair, Price(100.0), Timestamp.now)))
+    val cacheTask = Task.eval(Right(Map(pair → Rate(pair, Price(100.0), Timestamp.now))))
     (mockOneForgeClient.getOneForgeRates _).stubs().returning(cacheTask)
 
     val oneForge = asyncApplication.oneForge.oneForge
@@ -99,9 +103,9 @@ class LiveApplicationSpec extends ApplicationSpec {
       val firstTs = getRateTimestamp
 
       Thread.sleep(asyncApplication.applicationConfig.oneForge.cacheRefreshRate.toMillis * 2)
-      val thirdTs = getRateTimestamp
+      val secondTs = getRateTimestamp
 
-      assert(thirdTs.value.isAfter(firstTs.value))
+      assert(secondTs.value.isAfter(firstTs.value))
     }
   }
 }

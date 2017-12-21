@@ -3,12 +3,13 @@ package forex
 import forex.services.oneforge.components.OneForgeLive
 import monix.eval.Task
 import org.atnos.eff._
+import org.xdcrafts.eff.addon.metrics.Metrics
 import org.zalando.grafter._
 
 package object main {
 
   type OneForgeImpl = OneForgeLive
-  type AppStack = Fx.fx1[Task]
+  type AppStack = Fx.fx2[Task, Metrics]
   type AppEffect[R] = Eff[AppStack, R]
 
   def toStartErrorString(results: List[StartResult]): String =

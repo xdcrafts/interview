@@ -8,4 +8,9 @@ object Error {
   final case object NotFound extends Error("Not found")
   final case class ApiError(message: String) extends Error(message)
   final case class System(underlying: Throwable) extends Error(underlying.getMessage)
+
+  def fromThrowable(throwable: Throwable): Error = throwable match {
+    case err: Error ⇒ err
+    case thr        ⇒ System(thr)
+  }
 }
